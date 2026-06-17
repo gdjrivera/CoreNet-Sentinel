@@ -148,7 +148,7 @@ Sistema centralizado de respaldo automatico para configuraciones de FortiGate.
 
 ## Inventario de Dispositivos
 
-### Produccion (11 FortiGates)
+### Produccion (11 FortiGates) | Series genericas |
 
 | Hostname | Region | Rol | IP | Modelo | Serie | Firmware | Metodo |
 |----------|--------|-----|----|--------|-------|----------|--------|
