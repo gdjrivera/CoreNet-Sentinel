@@ -1,0 +1,33 @@
+{{ define "slack.warning" }}
+*Alert:* {{ .GroupLabels.alertname }}
+*Severity:* {{ .GroupLabels.severity | toUpper }}
+*Cluster:* {{ .ExternalLabels.cluster }}
+
+{{ range .Alerts }}
+  *Summary:* {{ .Annotations.summary }}
+  *Description:* {{ .Annotations.description }}
+  *Started:* {{ .StartsAt.Format "Jan 02, 2006 15:04:05 UTC" }}
+  {{ if .Annotations.runbook }}*Runbook:* {{ .Annotations.runbook }}{{ end }}
+{{ end }}
+
+{{ if .Alerts.Firing -}}
+  *Alerts Firing:* {{ .Alerts.Firing | len }}
+{{- end }}
+{{- if .Alerts.Resolved -}}
+  *Alerts Resolved:* {{ .Alerts.Resolved | len }}
+{{- end }}
+
+{{ .ExternalLabels.environment }} | {{ .GroupLabels.team }}
+{{ end }}
+
+{{ define "slack.info" }}
+*Info:* {{ .GroupLabels.alertname }}
+*Cluster:* {{ .ExternalLabels.cluster }}
+
+{{ range .Alerts }}
+  *Summary:* {{ .Annotations.summary }}
+  *Description:* {{ .Annotations.description }}
+{{ end }}
+
+{{ .ExternalLabels.environment }}
+{{ end }}

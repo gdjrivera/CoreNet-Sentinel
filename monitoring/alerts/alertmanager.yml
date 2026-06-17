@@ -1,0 +1,96 @@
+# ============================================
+# Alertmanager Configuration - FortiGate Backup
+# ============================================
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'team', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    - match:
+        severity: critical
+        team: network-ops
+      receiver: 'pagerduty-critical'
+      repeat_interval: 5m
+
+    - match:
+        severity: critical
+        team: security
+      receiver: 'pagerduty-critical'
+      repeat_interval: 5m
+
+    - match:
+        severity: critical
+        team: platform
+      receiver: 'pagerduty-critical'
+      repeat_interval: 5m
+
+    - match:
+        severity: warning
+      receiver: 'slack-warning'
+      repeat_interval: 2h
+
+    - match:
+        severity: info
+      receiver: 'slack-info'
+      repeat_interval: 6h
+
+    - receiver: 'email-daily'
+      continue: true
+
+receivers:
+  # Default receiver - all alerts
+  - name: 'default'
+    slack_configs:
+      - api_url: '{{ vault_slack_webhook_url }}'
+        channel: '#network-backups'
+        send_resolved: true
+        title: '{{ .GroupLabels.alertname }} [{{ .GroupLabels.severity | toUpper }}]'
+        text: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}"
+
+  # Critical alerts via PagerDuty
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: '{{ vault_pagerduty_routing_key }}'
+        send_resolved: true
+        severity: critical
+        images:
+          - src: 'https://internal.local/fortigate-backup-logo.png'
+            href: 'https://internal.local/monitoring'
+            alt: 'FortiGate Backup Dashboard'
+
+  # Warning alerts via Slack
+  - name: 'slack-warning'
+    slack_configs:
+      - api_url: '{{ vault_slack_webhook_url }}'
+        channel: '#network-backups'
+        send_resolved: true
+        title: '⚠️ {{ .GroupLabels.alertname }}'
+        text: "{{ template "slack.warning" . }}"
+
+  # Info alerts via Slack
+  - name: 'slack-info'
+    slack_configs:
+      - api_url: '{{ vault_slack_webhook_url }}'
+        channel: '#network-backups'
+        send_resolved: true
+        title: 'ℹ️ {{ .GroupLabels.alertname }}'
+        text: "{{ template "slack.info" . }}"
+
+  # Daily digest via email
+  - name: 'email-daily'
+    email_configs:
+      - to: 'netops@internal.local, security@internal.local'
+        from: 'alertmanager@internal.local'
+        smarthost: 'smtp.internal.local:587'
+        auth_username: 'alertmanager@internal.local'
+        auth_password: '{{ vault_smtp_password }}'
+        send_resolved: false
+        headers:
+          subject: '[FortiGate Backup] Daily Alert Digest - {{ .GroupLabels.alertname }}'
+        html: "{{ template "email.default.html" . }}"
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'

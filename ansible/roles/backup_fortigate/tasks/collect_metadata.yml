@@ -1,0 +1,42 @@
+---
+# Collect metadata about the backup for auditing and tracking
+- name: Calculate SHA256 hash of backup content
+  ansible.builtin.set_fact:
+    backup_hash: "{{ backup_content | hash('sha256') }}"
+    backup_size: "{{ backup_content | length }}"
+
+- name: Build metadata dictionary
+  ansible.builtin.set_fact:
+    backup_metadata:
+      hostname: "{{ fgt_hostname | default(inventory_hostname) }}"
+      serial: "{{ fgt_serial | default('unknown') }}"
+      model: "{{ fgt_model | default('unknown') }}"
+      firmware: "{{ fgt_version | default('unknown') }}"
+      role: "{{ fgt_role | default('unknown') }}"
+      region: "{{ fgt_region | default('unknown') }}"
+      location: "{{ fgt_location | default('unknown') }}"
+      backup_date: "{{ ansible_date_time.date }}"
+      backup_time: "{{ ansible_date_time.time }}"
+      backup_timestamp: "{{ backup_timestamp }}"
+      backup_method: "{{ backup_method_used | default('unknown') }}"
+      backup_size_bytes: "{{ backup_size }}"
+      backup_hash_sha256: "{{ backup_hash }}"
+      ansible_host: "{{ ansible_host }}"
+      backup_status: "pending"
+
+- name: Write metadata to JSON file
+  ansible.builtin.copy:
+    content: "{{ backup_metadata | to_nice_json }}"
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/{{ backup_file_prefix }}_metadata.json"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Append to global backup manifest
+  ansible.builtin.blockinfile:
+    path: "{{ backup_base_dir }}/manifest_{{ ansible_date_time.date }}.json"
+    block: |
+      {{ backup_metadata | to_json }},
+    create: true
+    mode: "0640"
+  delegate_to: localhost
+  when: backup_metadata is defined

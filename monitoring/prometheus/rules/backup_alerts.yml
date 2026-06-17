@@ -1,0 +1,166 @@
+# ============================================
+# Prometheus Alerting Rules - FortiGate Backup
+# ============================================
+
+groups:
+  - name: backup_alerts
+    interval: 60s
+    rules:
+
+      # ============================================
+      # Backup Status Alerts
+      # ============================================
+      - alert: BackupJobFailed
+        expr: fortigate_backup_status{status="failed"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: network-ops
+        annotations:
+          summary: "FortiGate backup job failed for {{ $labels.hostname }}"
+          description: "Backup job failed for device {{ $labels.hostname }} ({{ $labels.model }}) at {{ $labels.region }}. Last successful: {{ $value }}"
+          runbook: "https://internal.wiki/runbooks/fortigate-backup-failure"
+
+      - name: BackupSuccessRateLow
+        expr: |
+          (sum(rate(fortigate_backup_status{status="success"}[24h])) / sum(rate(fortigate_backup_status[24h]))) * 100 < 95
+        for: 30m
+        labels:
+          severity: warning
+          team: network-ops
+        annotations:
+          summary: "Backup success rate below 95% in last 24h"
+          description: "Overall backup success rate is {{ $value | humanizePercentage }}. Investigate recent failures."
+
+      - name: BackupStaleDevice
+        expr: time() - fortigate_backup_timestamp > 86400
+        for: 1h
+        labels:
+          severity: warning
+          team: network-ops
+        annotations:
+          summary: "No backup for {{ $labels.hostname }} in 24+ hours"
+          description: "Device {{ $labels.hostname }} has not been backed up in {{ $value | humanizeDuration }}"
+
+      # ============================================
+      # Device Health Alerts
+      # ============================================
+      - name: DeviceUnreachable
+        expr: fortigate_overall_status{host=~".+"} == 0
+        for: 10m
+        labels:
+          severity: critical
+          team: network-ops
+        annotations:
+          summary: "FortiGate {{ $labels.host }} is unreachable"
+          description: "Health check failed for {{ $labels.host }}. Check connectivity and device status."
+
+      - name: HighLatency
+        expr: fortigate_latency_ms > 500
+        for: 15m
+        labels:
+          severity: warning
+          team: network-ops
+        annotations:
+          summary: "High latency to {{ $labels.host }}"
+          description: "Latency to {{ $labels.host }} is {{ $value }}ms (threshold: 500ms)"
+
+      # ============================================
+      # Infrastructure Alerts
+      # ============================================
+      - name: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/opt/backups"} / node_filesystem_size_bytes{mountpoint="/opt/backups"}) * 100 < 20
+        for: 10m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Backup disk space critically low"
+          description: "Only {{ $value | humanizePercentage }} free on backup volume. Cleanup or expand storage."
+
+      - name: DiskSpaceWarning
+        expr: (node_filesystem_avail_bytes{mountpoint="/opt/backups"} / node_filesystem_size_bytes{mountpoint="/opt/backups"}) * 100 < 30
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Backup disk space running low"
+          description: "Only {{ $value | humanizePercentage }} free on backup volume (warning threshold: 30%)"
+
+      - name: GitRepositoryCorrupted
+        expr: fortigate_git_health{status="corrupted"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Git repository integrity check failed"
+          description: "The backup git repository may be corrupted. Run git fsck manually."
+
+      - name: HighBackupSizeAnomaly
+        expr: |
+          abs(fortigate_backup_size_bytes - avg_over_time(fortigate_backup_size_bytes[7d])) > 2 * stddev_over_time(fortigate_backup_size_bytes[7d])
+        for: 1h
+        labels:
+          severity: warning
+          team: network-ops
+        annotations:
+          summary: "Unusual backup size for {{ $labels.hostname }}"
+          description: "Backup size for {{ $labels.hostname }} deviates significantly from 7-day average"
+
+      # ============================================
+      # Security Alerts
+      # ============================================
+      - name: SecretsFoundInBackup
+        expr: fortigate_secrets_found > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Secrets detected in backup configuration"
+          description: "{{ $value }} secret(s) found in {{ $labels.filename }}. Review and rotate immediately."
+
+      - name: ConfigChangeDetected
+        expr: fortigate_config_change_detected > 0
+        for: 5m
+        labels:
+          severity: info
+          team: network-ops
+        annotations:
+          summary: "Configuration change detected on {{ $labels.hostname }}"
+          description: "Configuration hash changed for {{ $labels.hostname }}. Review diff."
+
+      # ============================================
+      # Compliance Alerts
+      # ============================================
+      - name: ComplianceViolation
+        expr: fortigate_compliance_score < 80
+        for: 1h
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Compliance score below threshold for {{ $labels.hostname }}"
+          description: "Device {{ $labels.hostname }} has compliance score of {{ $value }}% (threshold: 80%)"
+
+      - name: TLSCertExpiringSoon
+        expr: fortigate_tls_cert_expiry_days < 30
+        for: 1h
+        labels:
+          severity: warning
+          team: network-ops
+        annotations:
+          summary: "TLS certificate expiring for {{ $labels.host }}"
+          description: "Certificate expires in {{ $value }} days. Renew before expiry."
+
+      - name: UnusedSSHKey
+        expr: fortigate_ssh_key_last_used_days > 90
+        for: 1d
+        labels:
+          severity: info
+          team: security
+        annotations:
+          summary: "Unused SSH key detected"
+          description: "Backup SSH key for {{ $labels.hostname }} has not been used in {{ $value }} days"

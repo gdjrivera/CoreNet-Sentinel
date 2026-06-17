@@ -1,0 +1,90 @@
+---
+# Backup via SSH - executes show commands and captures output
+- name: Retrieve full configuration via SSH
+  ansible.netcommon.cli_command:
+    command: "show full-configuration"
+    timeout: "{{ fortigate.connection.api_timeout_seconds }}"
+  register: ssh_full_config
+  retries: "{{ fortigate.connection.ssh_retries }}"
+  delay: "{{ fortigate.connection.ssh_delay_seconds }}"
+  no_log: true
+
+- name: Retrieve system status
+  ansible.netcommon.cli_command:
+    command: "show system status"
+    timeout: 30
+  register: ssh_system_status
+  when: fortigate.backup.include_system_info
+  ignore_errors: true
+
+- name: Retrieve HA status
+  ansible.netcommon.cli_command:
+    command: "show system ha"
+    timeout: 30
+  register: ssh_ha_status
+  when: fortigate.backup.include_ha_status
+  ignore_errors: true
+
+- name: Retrieve license information
+  ansible.netcommon.cli_command:
+    command: "show system license"
+    timeout: 30
+  register: ssh_license
+  when: fortigate.backup.include_license_info
+  ignore_errors: true
+
+- name: Build combined configuration content
+  ansible.builtin.set_fact:
+    backup_content: |
+      # ============================================
+      # FortiGate Configuration Backup
+      # ============================================
+      # Hostname: {{ fgt_hostname }}
+      # Model: {{ fgt_model }}
+      # Serial: {{ fgt_serial }}
+      # Firmware: {{ fgt_version }}
+      # Role: {{ fgt_role }}
+      # Location: {{ fgt_location }}
+      # Backup Date: {{ ansible_date_time.date }}
+      # Backup Time: {{ ansible_date_time.time }}
+      # Backup Method: SSH
+      # ============================================
+      #
+      {{ ssh_full_config.stdout }}
+      {% if ssh_system_status.stdout is defined and ssh_system_status.stdout is not none %}
+      # ============================================
+      # SYSTEM STATUS
+      # ============================================
+      {{ ssh_system_status.stdout }}
+      {% endif %}
+      {% if ssh_ha_status.stdout is defined and ssh_ha_status.stdout is not none %}
+      # ============================================
+      # HA STATUS
+      # ============================================
+      {{ ssh_ha_status.stdout }}
+      {% endif %}
+      {% if ssh_license.stdout is defined and ssh_license.stdout is not none %}
+      # ============================================
+      # LICENSE INFO
+      # ============================================
+      {{ ssh_license.stdout }}
+      {% endif %}
+    backup_method_used: "ssh"
+
+- name: Write configuration to file
+  ansible.builtin.copy:
+    content: "{{ backup_content }}"
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/{{ backup_file_prefix }}_full_config.conf"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Verify config file was written successfully
+  ansible.builtin.stat:
+    path: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/{{ backup_file_prefix }}_full_config.conf"
+  delegate_to: localhost
+  register: config_file_stat
+
+- name: Fail if config file was not created
+  ansible.builtin.fail:
+    msg: "Config file was not created for {{ inventory_hostname }}"
+  when: not config_file_stat.stat.exists

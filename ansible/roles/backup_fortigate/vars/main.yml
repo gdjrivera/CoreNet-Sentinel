@@ -1,0 +1,28 @@
+---
+# Default variables for backup_fortigate role
+backup_method: "{{ backup_method | default('ssh') }}"
+backup_base_dir: "{{ backup_base_dir | default('/opt/backups/fortigates') }}"
+backup_retention_days: "{{ backup_retention_days | default(90) }}"
+
+fortigate:
+  connection:
+    ssh_retries: 3
+    ssh_delay_seconds: 5
+    api_retries: 3
+    api_timeout_seconds: 120
+    api_https: true
+    api_port: 443
+
+  backup:
+    include_system_info: true
+    include_ha_status: true
+    include_license_info: true
+    compress_config: false
+
+  validation:
+    min_config_size_bytes: 1024
+    max_config_size_bytes: 10485760
+    forbidden_patterns:
+      - "set password"
+      - "set private-key"
+      - "set secret"

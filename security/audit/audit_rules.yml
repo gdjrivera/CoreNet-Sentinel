@@ -1,0 +1,162 @@
+---
+# ============================================
+# FortiGate Backup - Audit & Compliance Rules
+# ============================================
+
+audit_rules:
+  # Backup operations
+  - id: "AUDIT-BK-001"
+    name: "Backup schedule compliance"
+    description: "All FortiGates must be backed up at least once every 24 hours"
+    check: "backup_frequency_last_24h"
+    severity: critical
+    remediation: "Verify AWX scheduler and device connectivity"
+
+  - id: "AUDIT-BK-002"
+    name: "Backup integrity verification"
+    description: "Backup SHA-256 hashes must match between backup and verification"
+    check: "hash_chain_verification"
+    severity: critical
+    remediation: "Run hash_verifier.py --verify-chain to detect tampering"
+
+  - id: "AUDIT-BK-003"
+    name: "Backup size validation"
+    description: "Backup files must be between 1KB and 10MB"
+    check: "config_file_size_range"
+    severity: high
+    remediation: "Investigate devices with unusual config sizes"
+
+  # Security controls
+  - id: "AUDIT-SEC-001"
+    name: "Secrets in configuration"
+    description: "No passwords, keys, or tokens in backup configurations"
+    check: "secrets_scan"
+    severity: critical
+    remediation: "Rotate exposed secrets and update scanning patterns"
+
+  - id: "AUDIT-SEC-002"
+    name: "Encryption at rest"
+    description: "Backup repository must be encrypted with git-crypt"
+    check: "git_crypt_enabled"
+    severity: critical
+    remediation: "Run setup_git_crypt.sh --init"
+
+  - id: "AUDIT-SEC-003"
+    name: "Access control"
+    description: "Only authorized users can access backup repository"
+    check: "repository_permissions"
+    severity: high
+    remediation: "Review file permissions (0750 on directories, 0640 on files)"
+
+  - id: "AUDIT-SEC-004"
+    name: "SSH key rotation"
+    description: "Backup SSH keys must be rotated every 90 days"
+    check: "ssh_key_age"
+    severity: high
+    remediation: "Run rotate_credentials.sh --rotate-ssh"
+
+  - id: "AUDIT-SEC-005"
+    name: "API token rotation"
+    description: "FortiGate API tokens must be rotated every 30 days"
+    check: "api_token_age"
+    severity: high
+    remediation: "Run rotate_credentials.sh --rotate-api"
+
+  - id: "AUDIT-SEC-006"
+    name: "TLS certificate validity"
+    description: "Backup connections must use valid TLS 1.2+ certificates"
+    check: "tls_version_and_expiry"
+    severity: high
+    remediation: "Renew certificates before expiry"
+
+  # Infrastructure
+  - id: "AUDIT-INF-001"
+    name: "Disk space"
+    description: "Backup storage must have at least 20% free space"
+    check: "disk_usage"
+    severity: critical
+    remediation: "Increase storage or clean up old backups"
+
+  - id: "AUDIT-INF-002"
+    name: "Git repository integrity"
+    description: "Git repository must pass fsck without errors"
+    check: "git_fsck"
+    severity: high
+    remediation: "Run git fsck and repair if needed"
+
+  - id: "AUDIT-INF-003"
+    name: "Ansible collection version"
+    description: "fortinet.fortios collection must be at minimum version"
+    check: "collection_version_minimum"
+    severity: low
+    remediation: "ansible-galaxy collection install --upgrade fortinet.fortios"
+
+  - id: "AUDIT-INF-004"
+    name: "Backup metadata database"
+    description: "Backup metadata must be recorded in the database"
+    check: "database_backup_records"
+    severity: medium
+    remediation: "Check metadata_logger.py execution"
+
+  # Compliance
+  - id: "AUDIT-COMP-001"
+    name: "NIST CSF compliance"
+    description: "Backup system must meet NIST CSF ID.BE-5, PR.DS-4, PR.DS-8"
+    check: "nist_csf_controls"
+    severity: high
+    remediation: "Review NIST CSF mapping document"
+
+  - id: "AUDIT-COMP-002"
+    name: "SOX compliance"
+    description: "Backup audit logs must be retained for 7 years"
+    check: "audit_log_retention"
+    severity: high
+    remediation: "Configure log shipping to SIEM with 7-year retention"
+
+  - id: "AUDIT-COMP-003"
+    name: "GDPR compliance"
+    description: "Personal data in configs must be identified and handled"
+    check: "pii_detection"
+    severity: medium
+    remediation: "Review secrets scanner for PII patterns"
+
+  - id: "AUDIT-COMP-004"
+    name: "PCI DSS compliance"
+    description: "Backup access must be logged and monitored"
+    check: "access_logging"
+    severity: high
+    remediation: "Enable detailed audit logging in AWX"
+
+compliance_profiles:
+  standard:
+    description: "Standard compliance for edge devices"
+    rules:
+      - "AUDIT-BK-001"
+      - "AUDIT-BK-002"
+      - "AUDIT-BK-003"
+      - "AUDIT-SEC-001"
+      - "AUDIT-SEC-002"
+      - "AUDIT-SEC-003"
+      - "AUDIT-INF-001"
+      - "AUDIT-INF-002"
+
+  enhanced:
+    description: "Enhanced compliance for primary/secondary devices"
+    rules:
+      - "AUDIT-BK-001"
+      - "AUDIT-BK-002"
+      - "AUDIT-BK-003"
+      - "AUDIT-SEC-001"
+      - "AUDIT-SEC-002"
+      - "AUDIT-SEC-003"
+      - "AUDIT-SEC-004"
+      - "AUDIT-SEC-005"
+      - "AUDIT-SEC-006"
+      - "AUDIT-INF-001"
+      - "AUDIT-INF-002"
+      - "AUDIT-INF-003"
+      - "AUDIT-INF-004"
+      - "AUDIT-COMP-001"
+      - "AUDIT-COMP-002"
+      - "AUDIT-COMP-003"
+      - "AUDIT-COMP-004"

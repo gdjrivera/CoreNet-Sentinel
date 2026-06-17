@@ -1,0 +1,149 @@
+{
+  "dashboard": {
+    "title": "FortiGate Backup System",
+    "tags": ["fortigate", "backup", "network"],
+    "timezone": "America/Santiago",
+    "panels": [
+      {
+        "title": "Backup Success Rate (24h)",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "(sum(rate(fortigate_backups_7d_success[24h])) / sum(rate(fortigate_backups_7d_total[24h]))) * 100",
+          "legendFormat": "Success Rate"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 90},
+                {"color": "green", "value": 95}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0}
+      },
+      {
+        "title": "Active Devices",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_backups_active_devices_7d",
+          "legendFormat": "Active Devices"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 5},
+                {"color": "green", "value": 10}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0}
+      },
+      {
+        "title": "Backup Storage Usage",
+        "type": "gauge",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_backup_disk_usage_percent",
+          "legendFormat": "Disk Usage"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 80},
+                {"color": "red", "value": 95}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0}
+      },
+      {
+        "title": "Total Backup Size",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_backup_total_size_bytes",
+          "legendFormat": "Total Size"
+        }],
+        "fieldConfig": {"defaults": {"unit": "bytes"}},
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0}
+      },
+      {
+        "title": "Git Repository Health",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_git_health{status=\"healthy\"}",
+          "legendFormat": "Git Health"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0}
+      },
+      {
+        "title": "Git Uncommitted Files",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_git_dirty_files",
+          "legendFormat": "Dirty Files"
+        }],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0}
+      },
+      {
+        "title": "Backups Over Time (7d)",
+        "type": "timeseries",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "increase(fortigate_backup_7d_success[24h])",
+            "legendFormat": "Successful"
+          },
+          {
+            "expr": "increase(fortigate_backup_7d_failed[24h])",
+            "legendFormat": "Failed"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+      },
+      {
+        "title": "Device Validation Status",
+        "type": "table",
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "fortigate_validation_status",
+          "format": "table",
+          "instant": true
+        }],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+      }
+    ]
+  },
+  "overwrite": true
+}

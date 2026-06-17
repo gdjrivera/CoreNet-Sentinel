@@ -1,0 +1,199 @@
+# ============================================
+# GitHub Actions Pipeline for FortiGate Backup
+# ============================================
+name: FortiGate Backup Pipeline
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # Daily at 02:00 UTC
+    - cron: '0 8 * * *'   # Daily at 08:00 UTC
+    - cron: '0 14 * * *'  # Daily at 14:00 UTC
+    - cron: '0 20 * * *'  # Daily at 20:00 UTC
+  push:
+    branches: [main, develop]
+    paths:
+      - 'ansible/**'
+      - 'scripts/**'
+      - 'requirements.txt'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      region:
+        description: 'Target region (optional)'
+        required: false
+        type: choice
+        options:
+          - all
+          - norte
+          - sur
+          - centro
+          - oriente
+
+env:
+  ANSIBLE_FORCE_COLOR: 'true'
+  BACKUP_DIR: /opt/backups/fortigates
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          ansible-galaxy collection install fortinet.fortios community.network
+
+      - name: Validate Ansible syntax
+        run: |
+          ansible-playbook ansible/playbooks/backup.yml --syntax-check
+          ansible-inventory -i ansible/inventory/production/hosts.yml --list > /dev/null
+
+      - name: Validate YAML
+        run: |
+          pip install yamllint
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' ansible/
+
+      - name: Validate Python scripts
+        run: |
+          python scripts/python/hash_verifier.py --help
+          python scripts/python/report_generator.py --help
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [validate]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Scan for secrets
+        run: |
+          python scripts/python/secrets_scanner.py --dir ansible/ --ci-mode || true
+          python scripts/python/secrets_scanner.py --dir scripts/ --ci-mode || true
+
+      - name: TruffleHog scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
+  backup:
+    name: Execute Backup
+    runs-on: [self-hosted, fortigate-backup]
+    needs: [validate, security-scan]
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          ansible-galaxy collection install fortinet.fortios community.network
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/fortigate-backup-key
+          chmod 0600 ~/.ssh/fortigate-backup-key
+          echo "${{ secrets.VAULT_PASSWORD }}" > .vault_password
+          chmod 0400 .vault_password
+          ssh-keyscan -H ${{ secrets.BASTION_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Run Backup Playbook
+        run: |
+          PLAYBOOK_ARGS=""
+          if [ "${{ github.event.inputs.region }}" != "" ] && [ "${{ github.event.inputs.region }}" != "all" ]; then
+            PLAYBOOK_ARGS="--limit region_${{ github.event.inputs.region }}"
+          fi
+          if [ "${{ github.event.inputs.environment }}" == "staging" ] || [ "${{ github.event_name }}" == "pull_request" ]; then
+            PLAYBOOK_ARGS="$PLAYBOOK_ARGS --check"
+          fi
+
+          ansible-playbook ansible/playbooks/backup.yml \
+            -i ansible/inventory/production/hosts.yml \
+            --vault-password-file .vault_password \
+            $PLAYBOOK_ARGS \
+            -e "backup_method=auto notify_on_failure=true"
+        timeout-minutes: 120
+        continue-on-error: ${{ github.event.inputs.environment == 'staging' }}
+
+      - name: Verify Backups
+        run: |
+          python scripts/python/hash_verifier.py --backup-dir $BACKUP_DIR --verify-chain || true
+          python scripts/python/hash_verifier.py --backup-dir $BACKUP_DIR --verify-dir $BACKUP_DIR || true
+
+      - name: Generate Report
+        run: |
+          python scripts/python/report_generator.py \
+            --backup-dir $BACKUP_DIR \
+            --date $(date +%Y-%m-%d) \
+            --format html \
+            --output reports/backup-report-$(date +%Y-%m-%d).html
+
+      - name: Upload Report as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-report-${{ github.run_id }}
+          path: reports/*.html
+          retention-days: 90
+
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    needs: [backup]
+    if: always() && github.event_name == 'schedule'
+
+    steps:
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "channel": "#network-backups",
+              "username": "FortiGate Backup",
+              "text": "Backup pipeline completed: ${{ needs.backup.result }}",
+              "attachments": [{
+                "color": "${{ needs.backup.result == 'success' && 'good' || 'danger' }}",
+                "fields": [
+                  {"title": "Status", "value": "${{ needs.backup.result }}", "short": true},
+                  {"title": "Run ID", "value": "${{ github.run_id }}", "short": true},
+                  {"title": "Trigger", "value": "${{ github.event_name }}", "short": true}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

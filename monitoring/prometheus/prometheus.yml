@@ -1,0 +1,81 @@
+# ============================================
+# Prometheus Configuration - FortiGate Backup
+# ============================================
+
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+  scrape_timeout: 30s
+  external_labels:
+    cluster: fortigate-backup
+    environment: production
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+      scheme: http
+      timeout: 10s
+
+# Rule files
+rule_files:
+  - "rules/backup_alerts.yml"
+
+# Scrape targets
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node exporter (infrastructure metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets:
+          - 'node-exporter:9100'
+          - 'localhost:9100'
+    metrics_path: /metrics
+
+  # FortiGate health metrics
+  - job_name: 'fortigate_health'
+    scrape_interval: 300s
+    static_configs:
+      - targets:
+          - 'pushgateway:9091'
+    metrics_path: /metrics
+    honor_labels: true
+
+  # Ansible job metrics
+  - job_name: 'ansible_metrics'
+    scrape_interval: 300s
+    static_configs:
+      - targets:
+          - 'pushgateway:9091'
+    metrics_path: /metrics
+    honor_labels: true
+
+  # PostgreSQL exporter
+  - job_name: 'postgresql'
+    scrape_interval: 120s
+    static_configs:
+      - targets:
+          - 'postgres-exporter:9187'
+    metrics_path: /metrics
+    metric_relabel_configs:
+      - source_labels: [database]
+        regex: .*fortigate.*
+        action: keep
+
+  # Backup directory metrics (via textfile collector)
+  - job_name: 'backup_metrics'
+    scrape_interval: 300s
+    static_configs:
+      - targets:
+          - 'node-exporter:9100'
+    metrics_path: /metrics
+    params:
+      collect[]:
+        - textfile

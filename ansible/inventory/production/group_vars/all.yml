@@ -1,0 +1,54 @@
+---
+# Global configuration for all hosts
+backup_schedule:
+  incremental_interval_hours: 6
+  full_interval_hours: 24
+  full_backup_hour: "02:00"
+  incremental_backup_hours: ["02:00", "08:00", "14:00", "20:00"]
+  timezone: "America/Santiago"
+
+backup_retention:
+  git_history_days: 90
+  s3_cold_storage_days: 365
+  s3_object_lock_days: 365
+  max_config_versions: 50
+
+security:
+  ssh_host_key_validation: true
+  verify_config_hash: true
+  hash_algorithm: sha256
+  encrypt_repo: true
+  git_crypt_enabled: true
+  secrets_scan_enabled: true
+  config_diff_notify: true
+
+monitoring:
+  prometheus_enabled: true
+  metrics_port: 9100
+  healthcheck_interval_seconds: 300
+
+logging:
+  log_level: INFO
+  log_dir: "/var/log/fortigate-backup"
+  syslog_server: "{{ vault_syslog_server | default(None) }}"
+  syslog_port: 514
+  syslog_protocol: tls
+
+notifications:
+  slack_enabled: true
+  slack_channel: "#network-backups"
+  teams_enabled: false
+  email_enabled: true
+  email_recipients:
+    - "netops@internal.local"
+    - "security@internal.local"
+  pagerduty_enabled: true
+  pagerduty_severity: critical
+
+network:
+  bastion_host: "{{ vault_bastion_host | default(None) }}"
+  bastion_port: 22
+  ansible_ssh_common_args: >-
+    {% if network.bastion_host is not none %}
+    -o ProxyJump={{ vault_bastion_user }}@{{ network.bastion_host }}:{{ network.bastion_port }}
+    {% endif %}

@@ -1,0 +1,116 @@
+---
+# Restore FortiGate configuration
+- name: Include vault credentials
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../vault/vault.yml"
+    fail_on_missing: true
+
+- name: Validate restore parameters
+  ansible.builtin.assert:
+    that:
+      - restore_version is defined
+      - restore_version | length > 0
+    fail_msg: "restore_version is required. Usage: --extra-vars 'restore_version=20250101_020000'"
+
+- name: Check if restore requires approval
+  ansible.builtin.set_fact:
+    requires_approval: "{{ fgt_role in fortigate.restore.approval_required_for | default(['primary', 'secondary']) }}"
+
+- name: Require manual approval for critical devices
+  ansible.builtin.pause:
+    prompt: |
+      ============================================
+      RESTORE APPROVAL REQUIRED
+      ============================================
+      Device: {{ fgt_hostname | default(inventory_hostname) }}
+      Role: {{ fgt_role }}
+      Model: {{ fgt_model }}
+      Serial: {{ fgt_serial }}
+      Location: {{ fgt_location }}
+      Restore Version: {{ restore_version }}
+      Config File: {{ backup_base_dir }}/{{ inventory_hostname }}/{{ restore_version }}/{{ fgt_hostname }}_{{ restore_version }}_full_config.conf
+      ============================================
+      Type 'yes' to approve this restoration:
+    when: requires_approval
+
+- name: Locate backup file for restore
+  ansible.builtin.find:
+    paths: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ restore_version }}/"
+    patterns: "*full_config*"
+  delegate_to: localhost
+  register: restore_files
+
+- name: Fail if backup version not found
+  ansible.builtin.fail:
+    msg: "No backup found for {{ inventory_hostname }} at version {{ restore_version }}"
+  when: restore_files.files | length == 0
+
+- name: Set restore file path
+  ansible.builtin.set_fact:
+    restore_file_path: "{{ restore_files.files[0].path }}"
+    restore_filename: "{{ restore_files.files[0].filename }}"
+
+- name: Display restore plan
+  ansible.builtin.debug:
+    msg:
+      - "Initiating restore for {{ fgt_hostname }}"
+      - "Config file: {{ restore_filename }}"
+      - "Config size: {{ restore_files.files[0].size }} bytes"
+      - "Last modified: {{ restore_files.files[0].mtime }}"
+
+- name: Deploy configuration via SCP
+  ansible.builtin.copy:
+    src: "{{ restore_file_path }}"
+    dest: "/tmp/{{ restore_filename }}"
+    mode: "0600"
+  register: scp_result
+
+- name: Apply configuration via CLI
+  ansible.netcommon.cli_command:
+    command: "execute restore config full /tmp/{{ restore_filename }}"
+    timeout: 120
+  register: restore_apply
+  when:
+    - scp_result.changed or scp_result.success
+    - not fortigate.restore.config_merge
+  ignore_errors: true
+
+- name: Apply configuration as merge (non-destructive)
+  ansible.netcommon.cli_command:
+    command: "execute restore config partial /tmp/{{ restore_filename }}"
+    timeout: 120
+  register: restore_merge
+  when:
+    - scp_result.changed or scp_result.success
+    - fortigate.restore.config_merge
+
+- name: Verify restored configuration
+  ansible.netcommon.cli_command:
+    command: "show system status"
+    timeout: 30
+  register: post_restore_status
+
+- name: Create restore manifest
+  ansible.builtin.copy:
+    content: |
+      {
+        "restore_timestamp": "{{ ansible_date_time.iso8601 }}",
+        "hostname": "{{ fgt_hostname }}",
+        "serial": "{{ fgt_serial }}",
+        "restore_version": "{{ restore_version }}",
+        "restore_file": "{{ restore_filename }}",
+        "restore_method": "{{ 'merge' if fortigate.restore.config_merge else 'full' }}",
+        "restore_status": "{{ 'success' if restore_apply.changed or restore_merge.changed else 'failed' }}",
+        "initiated_by": "{{ ansible_user_id }}"
+      }
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/restore_record_{{ restore_version }}.json"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Notify restore completion
+  ansible.builtin.include_role:
+    name: notify
+  vars:
+    notification_type: "restore"
+    notification_status: "{{ 'success' if restore_apply.changed or restore_merge.changed else 'failed' }}"
+    notification_message: "Restore {{ 'completed' if restore_apply.changed or restore_merge.changed else 'failed' }} for {{ fgt_hostname }} (version: {{ restore_version }})"

@@ -1,0 +1,120 @@
+---
+# ============================================
+# FortiGate Configuration Restore Playbook
+# ============================================
+# Restores a previously backed up configuration
+# to one or more FortiGate devices.
+#
+# WARNING: This is a destructive operation on
+# primary/secondary devices. Approval is required.
+# ============================================
+# Usage:
+#   # Restore specific device
+#   ansible-playbook playbooks/restore.yml \
+#     --limit fgt-centro-dc01 \
+#     -e "restore_version=20250101_020000"
+#
+#   # Restore with staging first
+#   ansible-playbook playbooks/restore.yml \
+#     --limit fgt-centro-suc01 \
+#     -e "restore_version=20250101_020000 config_merge=true"
+#
+#   # Emergency rollback (bypass approval for edge devices)
+#   ansible-playbook playbooks/restore.yml \
+#     --limit fgt-norte-suc01 \
+#     -e "restore_version=20250101_000000 emergency=true"
+# ============================================
+
+- name: Validate Restore Parameters
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  run_once: true
+
+  tasks:
+    - name: Check required parameters
+      ansible.builtin.assert:
+        that:
+          - restore_version is defined
+          - restore_version | length > 0
+        fail_msg: |
+          Required parameter 'restore_version' is missing.
+          Usage: -e "restore_version=20250101_020000"
+          To list available versions, check git tags:
+            git tag -l 'backup-*' | sort -r
+
+    - name: Verify restore version format
+      ansible.builtin.assert:
+        that:
+          - restore_version is match('^\\d{8}_\\d{6}$')
+        fail_msg: "restore_version must be in format YYYYMMDD_HHMMSS. Example: 20250101_020000"
+
+    - name: Display restore warning
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════╗
+          ║            CONFIGURATION RESTORE                 ║
+          ╠══════════════════════════════════════════════════╣
+          ║  Target Version: {{ restore_version }}                    ║
+          ║  Devices: {{ ansible_limit | default('ALL FORTIGATES') }}            ║
+          ║  Merge Mode: {{ config_merge | default(false) }}                     ║
+          ║  Emergency: {{ emergency | default(false) }}                         ║
+          ╚══════════════════════════════════════════════════╝
+
+    - name: Require confirmation for production restore
+      ansible.builtin.pause:
+        prompt: |
+          Type 'RESTORE' to confirm restoration to {{ ansible_limit | default('ALL DEVICES') }}:
+      when: not emergency | default(false)
+      no_log: true
+
+- name: Restore FortiGate Configuration
+  hosts: fortigates
+  gather_facts: yes
+  serial: 1
+  order: sorted
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Set config_merge from playbook variable
+      ansible.builtin.set_fact:
+        fortigate_restore_config_merge: "{{ config_merge | default(fortigate.restore.config_merge | default(false)) }}"
+
+    - name: Verify device is reachable before restore
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(22) }}"
+        timeout: 10
+        state: started
+
+    - name: Create pre-restore snapshot
+      ansible.builtin.include_role:
+        name: backup_fortigate
+      vars:
+        backup_method: "{{ backup_method | default('ssh') }}"
+        snapshot_prefix: "pre_restore_{{ restore_version }}"
+
+  roles:
+    - role: restore_fortigate
+
+  post_tasks:
+    - name: Verify device is back online after restore
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(22) }}"
+        timeout: 120
+        state: started
+      when: not fortigate.restore.config_merge
+
+    - name: Run post-restore health check
+      ansible.builtin.include_role:
+        name: validate_config
+      when: not ansible_check_mode
+
+    - name: Log restore completion
+      ansible.builtin.shell:
+        cmd: |
+          echo "RESTORE {{ ansible_date_time.iso8601 }} {{ inventory_hostname }} version={{ restore_version }} status=success" >> {{ backup_base_dir }}/restore_audit.log
+      delegate_to: localhost
+      changed_when: false

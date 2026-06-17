@@ -1,0 +1,87 @@
+---
+# FortiGate-specific configuration
+fortigate:
+  connection:
+    ssh_retries: 3
+    ssh_delay_seconds: 5
+    api_retries: 3
+    api_timeout_seconds: 120
+    api_https: true
+    api_port: 443
+
+  backup:
+    config_commands:
+      - "show full-configuration"
+      - "show system status"
+      - "show system ha"
+      - "show router static"
+      - "show firewall policy"
+      - "show vpn ipsec phase1-interface"
+      - "show vpn ipsec phase2-interface"
+      - "show system interface"
+      - "show system dns"
+      - "show system ntp"
+      - "show user local"
+      - "show user group"
+      - "show log setting"
+      - "show system admin"
+    include_system_info: true
+    include_ha_status: true
+    include_license_info: true
+    compress_config: false
+
+  api:
+    api_endpoints:
+      config: "/api/v2/monitor/system/config/backup"
+      status: "/api/v2/monitor/system/status"
+      ha: "/api/v2/monitor/system/ha-statistics"
+      license: "/api/v2/monitor/system/license/status"
+      interfaces: "/api/v2/monitor/network/interface"
+      policies: "/api/v2/monitor/firewall/policy"
+      vpn: "/api/v2/monitor/vpn/ipsec"
+    api_version: "v2"
+
+  validation:
+    min_config_size_bytes: 1024
+    max_config_size_bytes: 10485760
+    required_sections:
+      - "config system global"
+      - "config system interface"
+      - "config firewall policy"
+      - "config router static"
+    forbidden_patterns:
+      - "set password"
+      - "set private-key"
+      - "set secret"
+
+  restore:
+    staging_first: true
+    staging_host: "fgt-centro-sandbox.internal.local"
+    require_approval: true
+    approval_required_for:
+      - primary
+      - secondary
+    auto_approve_for:
+      - edge
+    pre_restore_commands:
+      - "execute backup config tftp {{ restore_staging_host }} {{ restore_filename }}"
+    post_restore_commands:
+      - "execute reboot"
+    config_merge: false
+
+  health:
+    check_cpu: true
+    cpu_warn_threshold: 70
+    cpu_crit_threshold: 90
+    check_memory: true
+    memory_warn_threshold: 75
+    memory_crit_threshold: 90
+    check_disk: true
+    disk_warn_threshold: 80
+    disk_crit_threshold: 95
+    check_ha: true
+    check_license: true
+    license_expiry_warn_days: 30
+    check_sessions: true
+    session_warn_threshold: 80
+    session_crit_threshold: 95

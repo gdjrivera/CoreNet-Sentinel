@@ -1,0 +1,64 @@
+---
+# ============================================
+# Molecule Test - Backup Role
+# ============================================
+# Run with: molecule test
+# ============================================
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: fortigate-simulator
+    image: "fortinet/fortigate-simulator:latest"
+    pre_build_image: true
+    command: /sbin/init
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    privileged: true
+    networks:
+      - name: backup-network
+
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      all:
+        ansible_user: admin
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        backup_base_dir: /tmp/backups
+        backup_retention_days: 7
+        git_repo_url: ""
+        notify_on_failure: false
+    host_vars:
+      fortigate-simulator:
+        fgt_hostname: FGT-SIMULATOR
+        fgt_model: FortiGate-VM64
+        fgt_serial: FGVM00TEST000001
+        fgt_version: v7.4.3
+        fgt_role: lab
+        fgt_location: "Test Lab"
+        fgt_region: lab
+        backup_method: ssh
+        backup_priority: 1
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - lint
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - destroy

@@ -1,0 +1,122 @@
+---
+# Send notifications for backup events
+- name: Determine notification channel
+  ansible.builtin.set_fact:
+    use_slack: "{{ notifications.slack_enabled | default(false) }}"
+    use_teams: "{{ notifications.teams_enabled | default(false) }}"
+    use_email: "{{ notifications.email_enabled | default(false) }}"
+    use_pagerduty: "{{ notifications.pagerduty_enabled | default(false) }}"
+
+- name: Build notification message
+  ansible.builtin.set_fact:
+    notification_payload: |
+      {
+        "text": "{{ notification_message | default('FortiGate Backup Notification') }}",
+        "hostname": "{{ fgt_hostname | default(inventory_hostname) }}",
+        "status": "{{ notification_status | default('unknown') }}",
+        "timestamp": "{{ ansible_date_time.iso8601 }}",
+        "type": "{{ notification_type | default('backup') }}",
+        "details": {
+          "model": "{{ fgt_model | default('N/A') }}",
+          "serial": "{{ fgt_serial | default('N/A') }}",
+          "firmware": "{{ fgt_version | default('N/A') }}",
+          "region": "{{ fgt_region | default('N/A') }}",
+          "location": "{{ fgt_location | default('N/A') }}",
+          "backup_method": "{{ backup_method_used | default('N/A') }}",
+          "config_size": "{{ backup_size | default('N/A') }}",
+          "config_hash": "{{ backup_hash | default('N/A') }}"
+        }
+      }
+
+- name: Send Slack notification
+  ansible.builtin.uri:
+    url: "{{ vault_slack_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      channel: "{{ notifications.slack_channel | default('#network-backups') }}"
+      username: "FortiGate Backup System"
+      icon_emoji: ":lock:"
+      attachments:
+        - color: "{{ 'danger' if notification_status == 'failed' else 'warning' if notification_status == 'changed' else 'good' }}"
+          title: "{{ notification_message }}"
+          fields:
+            - title: "Device"
+              value: "{{ fgt_hostname | default(inventory_hostname) }}"
+              short: true
+            - title: "Status"
+              value: "{{ notification_status | upper }}"
+              short: true
+            - title: "Type"
+              value: "{{ notification_type }}"
+              short: true
+            - title: "Region"
+              value: "{{ fgt_region | default('N/A') }}"
+              short: true
+          footer: "FortiGate Backup System"
+          ts: "{{ ansible_date_time.epoch }}"
+    validate_certs: true
+  when: use_slack
+  ignore_errors: true
+  no_log: true
+
+- name: Send email notification
+  ansible.builtin.mail:
+    to: "{{ notifications.email_recipients | join(',') }}"
+    subject: "[{{ notification_status | upper }}] {{ notification_type | capitalize }} - {{ fgt_hostname | default(inventory_hostname) }}"
+    body: |
+      {{ notification_message }}
+
+      Details:
+      - Device: {{ fgt_hostname | default(inventory_hostname) }}
+      - Model: {{ fgt_model | default('N/A') }}
+      - Serial: {{ fgt_serial | default('N/A') }}
+      - Firmware: {{ fgt_version | default('N/A') }}
+      - Region: {{ fgt_region | default('N/A') }}
+      - Location: {{ fgt_location | default('N/A') }}
+      - Timestamp: {{ ansible_date_time.iso8601 }}
+      - Config Hash: {{ backup_hash | default('N/A') }}
+
+      Backup Location: {{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/
+    from: "fortigate-backup@internal.local"
+    subtype: plain
+  when: use_email
+  ignore_errors: true
+
+- name: Send PagerDuty alert for failures
+  ansible.builtin.uri:
+    url: "https://events.pagerduty.com/v2/enqueue"
+    method: POST
+    body_format: json
+    body:
+      routing_key: "{{ vault_pagerduty_routing_key }}"
+      event_action: "trigger"
+      dedup_key: "{{ inventory_hostname }}-{{ ansible_date_time.date }}"
+      payload:
+        summary: "{{ notification_message }}"
+        source: "{{ inventory_hostname }}"
+        severity: "{{ notifications.pagerduty_severity | default('critical') }}"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        component: "fortigate-backup"
+        group: "{{ fgt_region | default('network') }}"
+        class: "{{ notification_type }}"
+        custom_details:
+          hostname: "{{ fgt_hostname | default(inventory_hostname) }}"
+          model: "{{ fgt_model | default('N/A') }}"
+          serial: "{{ fgt_serial | default('N/A') }}"
+          firmware: "{{ fgt_version | default('N/A') }}"
+          config_hash: "{{ backup_hash | default('N/A') }}"
+    validate_certs: true
+  when:
+    - use_pagerduty
+    - notification_status == 'failed'
+  ignore_errors: true
+  no_log: true
+
+- name: Log notification to local syslog
+  ansible.builtin.shell:
+    cmd: |
+      logger -t fortigate-backup -p local0.info "{{ notification_type }} {{ notification_status }} for {{ fgt_hostname | default(inventory_hostname) }}: {{ notification_message }}"
+    warn: false
+  changed_when: false
+  when: logging.log_level in ['INFO', 'DEBUG']

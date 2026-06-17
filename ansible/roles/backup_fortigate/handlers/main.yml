@@ -1,0 +1,27 @@
+---
+# Handlers for backup_fortigate role
+
+- name: Cleanup old backups
+  ansible.builtin.shell:
+    cmd: |
+      find {{ backup_base_dir }}/{{ inventory_hostname }} -type d -mtime +{{ backup_retention_days }} -exec rm -rf {} \; 2>/dev/null
+    warn: false
+  delegate_to: localhost
+  listen: "cleanup_old_backups"
+  ignore_errors: true
+
+- name: Compress completed backup
+  ansible.builtin.archive:
+    path: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/"
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}.tar.gz"
+    format: gz
+    remove: false
+  delegate_to: localhost
+  listen: "compress_backup"
+  when: fortigate.backup.compress_config
+
+- name: Notify backup completion
+  ansible.builtin.debug:
+    msg: "Backup completed for {{ inventory_hostname }} - Size: {{ backup_content | length }} bytes, Method: {{ backup_method_used }}"
+  listen: "backup_complete"
+  changed_when: false

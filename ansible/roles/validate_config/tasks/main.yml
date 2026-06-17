@@ -1,0 +1,53 @@
+---
+# Validate FortiGate configurations
+- name: Copy validation script to control node
+  ansible.builtin.copy:
+    src: validate_config.py
+    dest: "{{ backup_base_dir }}/scripts/validate_config.py"
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Run configuration validation
+  ansible.builtin.shell:
+    cmd: |
+      python3 {{ backup_base_dir }}/scripts/validate_config.py \
+        --config-dir {{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }} \
+        --hostname {{ fgt_hostname | default(inventory_hostname) }} \
+        --model {{ fgt_model | default('unknown') }} \
+        --firmware {{ fgt_version | default('unknown') }} \
+        --min-size {{ fortigate.validation.min_config_size_bytes }} \
+        --max-size {{ fortigate.validation.max_config_size_bytes }} \
+        --output {{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/validation_report.json
+    warn: false
+  delegate_to: localhost
+  register: validation_result
+  failed_when: validation_result.rc != 0 and validation_result.rc != 1
+
+- name: Read validation report
+  ansible.builtin.slurp:
+    src: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/validation_report.json"
+  delegate_to: localhost
+  register: validation_report_raw
+  when: validation_result.rc == 0
+
+- name: Parse validation results
+  ansible.builtin.set_fact:
+    validation_passed: "{{ (validation_report_raw.content | b64decode | from_json).valid }}"
+    validation_errors: "{{ (validation_report_raw.content | b64decode | from_json).errors }}"
+  when: validation_report_raw is defined
+
+- name: Create validation summary
+  ansible.builtin.template:
+    src: validation_summary.j2
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/validation_summary.txt"
+    mode: "0640"
+  delegate_to: localhost
+  when: validation_result.rc == 0
+
+- name: Check for breaking configuration issues
+  ansible.builtin.fail:
+    msg: "Validation failed for {{ inventory_hostname }}: {{ validation_errors | join('; ') }}"
+  when:
+    - validation_passed is defined
+    - not validation_passed
+    - notify_on_failure

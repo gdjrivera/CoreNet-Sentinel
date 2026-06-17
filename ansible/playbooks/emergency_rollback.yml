@@ -1,0 +1,118 @@
+---
+# ============================================
+# EMERGENCY ROLLBACK PLAYBOOK
+# ============================================
+# Fast-track restoration for critical incidents.
+# Bypasses normal approval workflows for
+# edge devices only.
+#
+# Primary/secondary devices still require
+# console-level confirmation.
+# ============================================
+# Usage:
+#   # Rollback single edge device
+#   ansible-playbook playbooks/emergency_rollback.yml \
+#     --limit fgt-norte-suc01 \
+#     -e "restore_version=20250101_020000"
+#
+#   # Rollback entire region
+#   ansible-playbook playbooks/emergency_rollback.yml \
+#     --limit region_centro \
+#     -e "restore_version=20250101_000000"
+#
+#   # Rollback with 2-person approval
+#   ansible-playbook playbooks/emergency_rollback.yml \
+#     --limit fgt-centro-dc01 \
+#     -e "restore_version=20250101_020000 second_approver=admin2"
+# ============================================
+
+- name: Emergency Rollback - Pre-flight Checks
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  run_once: true
+
+  tasks:
+    - name: Verify restore version
+      ansible.builtin.assert:
+        that:
+          - restore_version is defined
+          - restore_version is match('^\\d{8}_\\d{6}$')
+        fail_msg: "Must specify restore_version in YYYYMMDD_HHMMSS format"
+
+    - name: Log emergency rollback initiation
+      ansible.builtin.shell:
+        cmd: |
+          logger -t fortigate-emergency -p local0.alert "EMERGENCY ROLLBACK initiated by {{ ansible_user_id }} for {{ ansible_limit | default('ALL') }} version={{ restore_version }}"
+        warn: false
+      changed_when: false
+
+    - name: Display emergency banner
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════╗
+          ║           EMERGENCY ROLLBACK IN PROGRESS         ║
+          ╠══════════════════════════════════════════════════╣
+          ║  Version: {{ restore_version }}                                ║
+          ║  Targets: {{ ansible_limit | default('ALL DEVICES') }}                     ║
+          ║  Initiator: {{ ansible_user_id }}                                ║
+          ║  Timestamp: {{ ansible_date_time.iso8601 }}                    ║
+          ╚══════════════════════════════════════════════════╝
+
+- name: Emergency Restore
+  hosts: fortigates
+  gather_facts: yes
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Emergency pre-restore backup
+      ansible.builtin.include_role:
+        name: backup_fortigate
+      vars:
+        backup_method: ssh
+        snapshot_prefix: "emergency_pre_restore_{{ restore_version }}"
+
+  roles:
+    - role: restore_fortigate
+
+  post_tasks:
+    - name: Verify connectivity after rollback
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(22) }}"
+        timeout: 180
+        state: started
+
+    - name: Run emergency health check
+      ansible.builtin.shell:
+        cmd: |
+          python3 {{ playbook_dir }}/../scripts/python/health_check.py \
+            --host {{ ansible_host }} \
+            --port {{ ansible_port | default(443) }} \
+            --protocol {{ 'https' if backup_method == 'api' else 'ssh' }} \
+            --timeout 30
+      delegate_to: localhost
+      register: emergency_health
+      failed_when: emergency_health.rc != 0
+
+    - name: Log successful rollback
+      ansible.builtin.shell:
+        cmd: |
+          echo "EMERGENCY_ROLLBACK {{ ansible_date_time.iso8601 }} {{ inventory_hostname }} version={{ restore_version }} initiator={{ ansible_user_id }} status=success" >> {{ backup_base_dir }}/emergency_rollback_audit.log
+      delegate_to: localhost
+      changed_when: false
+
+- name: Emergency Notification
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  run_once: true
+
+  roles:
+    - role: notify
+      vars:
+        notification_type: "emergency_rollback"
+        notification_status: "completed"
+        notification_message: "EMERGENCY ROLLBACK completed for {{ ansible_limit | default('multiple devices') }} to version {{ restore_version }}"

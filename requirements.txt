@@ -1,0 +1,54 @@
+# ============================================
+# Python Dependencies - FortiGate Backup System
+# ============================================
+# Install with: pip install -r requirements.txt
+# ============================================
+
+# Core
+ansible-core>=2.15.0
+PyYAML>=6.0.1
+Jinja2>=3.1.2
+MarkupSafe>=2.1.3
+
+# Networking
+paramiko>=3.4.0
+cryptography>=41.0.7
+netaddr>=1.2.0
+requests>=2.31.0
+urllib3>=2.1.0
+
+# Ansible collections (installed via ansible-galaxy)
+# fortinet.fortios>=2.3.0
+# community.network>=7.0.0
+# community.general>=8.0.0
+
+# Monitoring & metrics
+prometheus-client>=0.19.0
+
+# Data processing
+python-dateutil>=2.8.2
+
+# CLI tools
+argparse>=1.4.0
+
+# Testing
+pytest>=7.4.3
+pytest-cov>=4.1.0
+
+# Development
+pre-commit>=3.6.0
+yamllint>=1.33.0
+ansible-lint>=6.22.0
+
+# Security
+# safety>=2.3.5
+
+# Optional - Database
+# psycopg2-binary>=2.9.9  # PostgreSQL
+# sqlite3 is built-in
+
+# Optional - HashiCorp Vault
+# hvac>=2.0.0
+
+# Optional - Reporting
+# weasyprint>=60.0  # PDF generation

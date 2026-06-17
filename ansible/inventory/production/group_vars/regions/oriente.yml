@@ -1,0 +1,22 @@
+---
+region_config:
+  name: "Oriente"
+  code: "ORN"
+  timezone: "America/Santiago"
+  backup_window_start: "01:30"
+  backup_window_end: "03:30"
+  backup_order: 3
+  notify_escalation:
+    - "netops-oriente@internal.local"
+    - "netops@internal.local"
+
+network:
+  management_subnet: "10.50.0.0/22"
+  mgmt_gateway: "10.50.0.1"
+  dns_servers:
+    - "10.50.0.10"
+    - "10.50.0.11"
+  ntp_servers:
+    - "10.50.0.20"
+    - "10.50.0.21"
+  syslog_server: "10.50.0.30"

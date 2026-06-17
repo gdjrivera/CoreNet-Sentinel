@@ -1,0 +1,139 @@
+---
+# ============================================
+# FortiGate Backup Playbook
+# ============================================
+# Orchestrates the full backup workflow:
+# 1. Extract configuration from all FortiGates
+# 2. Validate integrity and security posture
+# 3. Synchronize to Git repository
+# 4. Send notifications
+# ============================================
+# Usage:
+#   # Full backup of all devices
+#   ansible-playbook playbooks/backup.yml
+#
+#   # Backup specific region
+#   ansible-playbook playbooks/backup.yml --limit region_centro
+#
+#   # Backup single device
+#   ansible-playbook playbooks/backup.yml --limit fgt-centro-dc01
+#
+#   # Backup with specific method
+#   ansible-playbook playbooks/backup.yml -e "backup_method=api"
+#
+#   # Dry run (check mode)
+#   ansible-playbook playbooks/backup.yml --check
+# ============================================
+
+- name: FortiGate Configuration Backup - Production Run
+  hosts: fortigates
+  gather_facts: yes
+  serial: 10
+  order: sorted
+  any_errors_fatal: false
+  max_fail_percentage: 30
+
+  pre_tasks:
+    - name: Record backup start time
+      ansible.builtin.set_fact:
+        backup_start_time: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Validate that backup method is supported
+      ansible.builtin.assert:
+        that:
+          - backup_method in ['ssh', 'api']
+        fail_msg: "backup_method must be 'ssh' or 'api'. Check host variables or override with -e 'backup_method=api'"
+
+    - name: Ensure backup base directory exists
+      ansible.builtin.file:
+        path: "{{ backup_base_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Check Ansible collection availability
+      ansible.builtin.shell:
+        cmd: |
+          ansible-galaxy collection list fortinet.fortios 2>/dev/null | grep -c fortinet.fortios || echo "0"
+      delegate_to: localhost
+      run_once: true
+      register: collections_check
+      changed_when: false
+
+    - name: Fail if required collections are missing
+      ansible.builtin.fail:
+        msg: "Required Ansible collection 'fortinet.fortios' is not installed. Run: ansible-galaxy collection install fortinet.fortios"
+      run_once: true
+      when: collections_check.stdout | int == 0
+
+  roles:
+    - role: backup_fortigate
+      tags: [backup, extract]
+
+    - role: validate_config
+      tags: [validate, security]
+      when: not ansible_check_mode
+
+  post_tasks:
+    - name: Record backup end time
+      ansible.builtin.set_fact:
+        backup_end_time: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Calculate backup duration
+      ansible.builtin.set_fact:
+        backup_duration_seconds: "{{ ((ansible_date_time.epoch | int) - (backup_start_time | regex_replace('^.*T(\\d{2}):(\\d{2}):(\\d{2}).*$', '\\1\\2\\3') | int)) | abs }}"
+      when: backup_start_time is defined
+
+    - name: Generate backup summary
+      ansible.builtin.shell:
+        cmd: |
+          echo "Backup completed for {{ inventory_hostname }}" >> {{ backup_base_dir }}/summary_{{ ansible_date_time.date }}.log
+      delegate_to: localhost
+      changed_when: false
+
+- name: Git Synchronization
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  tags: [git_sync]
+  run_once: true
+
+  pre_tasks:
+    - name: Check git availability
+      ansible.builtin.shell:
+        cmd: "git --version"
+      changed_when: false
+      register: git_version_check
+      failed_when: git_version_check.rc != 0
+
+  roles:
+    - role: git_sync
+      when: not ansible_check_mode
+
+  post_tasks:
+    - name: Log git sync completion
+      ansible.builtin.debug:
+        msg: "Git synchronization completed for {{ ansible_date_time.date }} backup run"
+
+- name: Send Notifications
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  tags: [notify]
+  run_once: true
+
+  tasks:
+    - name: Aggregate backup results
+      ansible.builtin.set_fact:
+        total_devices: "{{ groups['fortigates'] | length }}"
+        successful_devices: "{{ ansible_play_hosts_all | default([]) | length }}"
+
+    - name: Send summary notification
+      ansible.builtin.include_role:
+        name: notify
+      vars:
+        notification_type: "backup_summary"
+        notification_status: "completed"
+        notification_message: "FortiGate backup completed: {{ successful_devices }}/{{ total_devices }} devices backed up successfully"
+      when: notify_on_success

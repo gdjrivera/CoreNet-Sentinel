@@ -1,0 +1,85 @@
+---
+# ============================================
+# FortiGate Validation Playbook
+# ============================================
+# Validates existing backups and device health
+# without performing new backups.
+#
+# Runs:
+#   - Config file integrity (hash, size)
+#   - Security posture scanning
+#   - Device reachability and health checks
+#   - Compliance verification
+# ============================================
+# Usage:
+#   # Validate all backed up configurations
+#   ansible-playbook playbooks/validate_all.yml
+#
+#   # Validate specific date
+#   ansible-playbook playbooks/validate_all.yml -e "validate_date=20250101"
+#
+#   # Validate with compliance enforcement
+#   ansible-playbook playbooks/validate_all.yml -e "enforce_compliance=true"
+# ============================================
+
+- name: Validate Device Configurations
+  hosts: fortigates
+  gather_facts: yes
+  serial: 20
+  order: sorted
+
+  vars:
+    validate_date: "{{ ansible_date_time.date }}"
+    enforce_compliance: false
+
+  pre_tasks:
+    - name: Check if backup exists for validate_date
+      ansible.builtin.stat:
+        path: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ validate_date }}"
+      delegate_to: localhost
+      register: backup_dir_check
+
+    - name: Skip if no backup found for date
+      ansible.builtin.debug:
+        msg: "No backup found for {{ inventory_hostname }} on {{ validate_date }}, skipping"
+      when: not backup_dir_check.stat.exists
+
+  roles:
+    - role: validate_config
+      when: backup_dir_check.stat.exists
+
+  post_tasks:
+    - name: Compile validation results
+      ansible.builtin.set_fact:
+        validation_result: "{{ validation_passed | default(false) }}"
+        validation_errors_list: "{{ validation_errors | default([]) }}"
+
+    - name: Fail on compliance violations
+      ansible.builtin.fail:
+        msg: "Compliance check failed for {{ inventory_hostname }}: {{ validation_errors_list | join(', ') }}"
+      when:
+        - enforce_compliance
+        - validation_errors_list | length > 0
+
+- name: Generate Global Validation Report
+  hosts: localhost
+  gather_facts: no
+  connection: local
+  run_once: true
+
+  tasks:
+    - name: Aggregate validation results
+      ansible.builtin.shell:
+        cmd: |
+          python3 {{ playbook_dir }}/../scripts/python/report_generator.py \
+            --backup-dir {{ backup_base_dir }} \
+            --date {{ validate_date }} \
+            --format html \
+            --output {{ backup_base_dir }}/reports/validation_report_{{ validate_date }}.html
+      delegate_to: localhost
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "Validation report generated: {{ backup_base_dir }}/reports/validation_report_{{ validate_date }}.html"

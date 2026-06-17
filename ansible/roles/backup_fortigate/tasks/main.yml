@@ -1,0 +1,41 @@
+---
+# Main backup role - dispatches to SSH or API method based on host vars
+- name: Include vault credentials
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../vault/vault.yml"
+    fail_on_missing: true
+
+- name: Ensure backup directory structure exists
+  ansible.builtin.file:
+    path: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}"
+    state: directory
+    mode: "0750"
+    owner: "{{ ansible_user }}"
+  delegate_to: localhost
+  run_once: false
+
+- name: Set backup timestamp
+  ansible.builtin.set_fact:
+    backup_timestamp: "{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}"
+    backup_file_prefix: "{{ fgt_hostname | default(inventory_hostname) }}_{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
+
+- name: Execute backup via API method
+  ansible.builtin.include_tasks: via_api.yml
+  when: backup_method == "api"
+
+- name: Execute backup via SSH method
+  ansible.builtin.include_tasks: via_ssh.yml
+  when: backup_method == "ssh"
+
+- name: Collect system metadata
+  ansible.builtin.include_tasks: collect_metadata.yml
+
+- name: Validate backup integrity
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Update backup status fact
+  ansible.builtin.set_fact:
+    backup_success: true
+    backup_size_bytes: "{{ backup_content | length | default(0) }}"
+    backup_hash: "{{ backup_hash | default('') }}"
+    backup_timestamp: "{{ backup_timestamp }}"

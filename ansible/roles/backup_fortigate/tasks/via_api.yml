@@ -1,0 +1,56 @@
+---
+# Backup via FortiGate REST API
+- name: Authenticate and get session token
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ fortigate.api.api_port }}/logincheck"
+    method: POST
+    body: "username={{ vault_fortigate_api_user | urlencode }}&secretkey={{ vault_fortigate_api_key | urlencode }}"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    validate_certs: "{{ vault_fortigate_validate_certs | default(false) }}"
+    status_code: [200, 302]
+  register: api_login
+  retries: "{{ fortigate.connection.api_retries }}"
+  delay: "{{ fortigate.connection.ssh_delay_seconds }}"
+  no_log: true
+
+- name: Extract session cookie
+  ansible.builtin.set_fact:
+    fortigate_cookie: "{{ api_login.set_cookie }}"
+  no_log: true
+
+- name: Download full configuration via API
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ fortigate.api.api_port }}{{ fortigate.api.api_endpoints.config }}"
+    method: GET
+    headers:
+      Cookie: "{{ fortigate_cookie }}"
+    validate_certs: "{{ vault_fortigate_validate_certs | default(false) }}"
+    status_code: 200
+    timeout: "{{ fortigate.connection.api_timeout_seconds }}"
+  register: api_config
+  retries: "{{ fortigate.connection.api_retries }}"
+  delay: "{{ fortigate.connection.ssh_delay_seconds }}"
+  no_log: true
+
+- name: Store raw configuration
+  ansible.builtin.set_fact:
+    backup_content: "{{ api_config.json | to_nice_json }}"
+    backup_method_used: "api"
+
+- name: Write configuration to file
+  ansible.builtin.copy:
+    content: "{{ backup_content }}"
+    dest: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/{{ backup_file_prefix }}_full_config.json"
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Logout from FortiGate API
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ fortigate.api.api_port }}/logout"
+    method: GET
+    headers:
+      Cookie: "{{ fortigate_cookie }}"
+    validate_certs: "{{ vault_fortigate_validate_certs | default(false) }}"
+    status_code: [200, 302]
+  ignore_errors: true

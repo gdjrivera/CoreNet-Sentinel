@@ -1,0 +1,43 @@
+---
+# Validate backup integrity and content
+- name: Validate minimum config size
+  ansible.builtin.assert:
+    that:
+      - backup_content | length >= fortigate.validation.min_config_size_bytes
+    fail_msg: "Backup content for {{ inventory_hostname }} is too small ({{ backup_content | length }} bytes, minimum {{ fortigate.validation.min_config_size_bytes }})"
+    success_msg: "Backup size validation passed for {{ inventory_hostname }}"
+
+- name: Validate maximum config size
+  ansible.builtin.assert:
+    that:
+      - backup_content | length <= fortigate.validation.max_config_size_bytes
+    fail_msg: "Backup content for {{ inventory_hostname }} exceeds maximum size ({{ backup_content | length }} bytes, max {{ fortigate.validation.max_config_size_bytes }})"
+    success_msg: "Backup size within limits for {{ inventory_hostname }}"
+
+- name: Check for forbidden patterns in config
+  ansible.builtin.set_fact:
+    found_forbidden_patterns: []
+    cacheable: false
+
+- name: Scan for forbidden patterns
+  ansible.builtin.set_fact:
+    found_forbidden_patterns: "{{ found_forbidden_patterns + [pattern] }}"
+  loop: "{{ fortigate.validation.forbidden_patterns }}"
+  when: backup_content | regex_search(pattern, multiline=True)
+  no_log: true
+
+- name: Warn if forbidden patterns found
+  ansible.builtin.debug:
+    msg: "WARNING: Forbidden patterns found in backup: {{ found_forbidden_patterns | join(', ') }}"
+  when: found_forbidden_patterns | length > 0
+
+- name: Verify backup file exists and has correct permissions
+  ansible.builtin.stat:
+    path: "{{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/{{ backup_file_prefix }}_full_config.*"
+  delegate_to: localhost
+  register: backup_file_check
+
+- name: Fail if backup files are missing
+  ansible.builtin.fail:
+    msg: "Backup files not found for {{ inventory_hostname }} after backup attempt"
+  when: not backup_file_check.stat.exists

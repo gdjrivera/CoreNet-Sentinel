@@ -1,0 +1,22 @@
+---
+region_config:
+  name: "Centro"
+  code: "CEN"
+  timezone: "America/Santiago"
+  backup_window_start: "00:00"
+  backup_window_end: "02:00"
+  backup_order: 0
+  notify_escalation:
+    - "netops-centro@internal.local"
+    - "netops@internal.local"
+
+network:
+  management_subnet: "10.150.0.0/22"
+  mgmt_gateway: "10.150.0.1"
+  dns_servers:
+    - "10.150.0.10"
+    - "10.150.0.11"
+  ntp_servers:
+    - "10.150.0.20"
+    - "10.150.0.21"
+  syslog_server: "10.150.0.30"

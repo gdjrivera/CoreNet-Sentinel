@@ -1,0 +1,99 @@
+---
+# Synchronize backups to Git repository
+- name: Ensure git is installed on control node
+  ansible.builtin.package:
+    name: git
+    state: present
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  when: ansible_system != "Win32NT"
+
+- name: Configure git user for backup commits
+  ansible.builtin.shell:
+    cmd: |
+      git config user.name "FortiGate Backup System"
+      git config user.email "backup-system@internal.local"
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  changed_when: false
+
+- name: Initialize git repository if not exists
+  ansible.builtin.shell:
+    cmd: |
+      if [ ! -d ".git" ]; then
+        git init
+        git remote add origin {{ git_repo_url }}
+        git checkout -b {{ git_branch }}
+      fi
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  changed_when: false
+  when: ansible_system != "Win32NT"
+
+- name: Stage all backup files
+  ansible.builtin.shell:
+    cmd: |
+      git add -A
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  register: git_add_result
+  changed_when: git_add_result.stdout != ""
+
+- name: Check if there are changes to commit
+  ansible.builtin.shell:
+    cmd: |
+      git diff --cached --quiet || echo "changes_detected"
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  register: git_diff_check
+  changed_when: false
+
+- name: Create commit with backup changes
+  ansible.builtin.shell:
+    cmd: |
+      git commit -m "[backup] Automated backup - {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+
+      Devices backed up: {{ ansible_play_hosts | join(', ') }}
+      Backup timestamp: {{ backup_timestamp | default(ansible_date_time.epoch) }}
+      Triggered by: {{ ansible_user_id | default('system') }}"
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  when: git_diff_check.stdout == "changes_detected"
+  register: git_commit_result
+  changed_when: git_commit_result.rc == 0
+
+- name: Push commits to remote repository
+  ansible.builtin.shell:
+    cmd: |
+      git push origin {{ git_branch }} 2>&1
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  when: git_commit_result.changed
+  register: git_push_result
+  changed_when: git_push_result.rc == 0
+  failed_when:
+    - git_push_result.rc != 0
+    - "'Could not read from remote repository' in git_push_result.stderr"
+  ignore_errors: true
+
+- name: Tag successful backup
+  ansible.builtin.shell:
+    cmd: |
+      git tag -a "backup-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}" \
+        -m "Automated backup tag for {{ ansible_date_time.date }} {{ ansible_date_time.time }}"
+      git push origin "backup-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  when: git_commit_result.changed
+  ignore_errors: true
+
+- name: Cleanup old git history (force push with limited depth)
+  ansible.builtin.shell:
+    cmd: |
+      git reflog expire --expire=unreachable --all
+      git gc --aggressive --prune=now
+    chdir: "{{ backup_base_dir }}"
+  delegate_to: localhost
+  when: false
+  ignore_errors: true

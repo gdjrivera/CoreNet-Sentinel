@@ -1,0 +1,251 @@
+---
+# ============================================
+# GitLab CI/CD Pipeline for FortiGate Backup
+# ============================================
+# Runs automated backup validation, security
+# scanning, and deployment orchestration.
+# ============================================
+
+variables:
+  ANSIBLE_FORCE_COLOR: "true"
+  ANSIBLE_HOST_KEY_CHECKING: "false"
+  BACKUP_DIR: "/opt/backups/fortigates"
+  ANSIBLE_VAULT_PASSWORD_FILE: ".vault_password"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  DOCKER_DRIVER: overlay2
+
+stages:
+  - validate
+  - security-scan
+  - test
+  - backup
+  - verify
+  - report
+  - deploy
+  - cleanup
+
+cache:
+  paths:
+    - .cache/pip
+    - venv/
+  key: "$CI_JOB_NAME-$CI_COMMIT_REF_SLUG"
+
+# ============================================
+# Job Templates
+# ============================================
+.ansible-setup: &ansible-setup
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv git sshpass
+    - python3 -m venv venv
+    - source venv/bin/activate
+    - pip install --quiet -r requirements.txt
+    - ansible-galaxy collection install fortinet.fortios community.network
+    - echo "$ANSIBLE_VAULT_PASSWORD" > .vault_password
+    - chmod 0400 .vault_password
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/fortigate-backup-key
+    - chmod 0600 ~/.ssh/fortigate-backup-key
+    - ssh-keyscan -H $BASTION_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+
+.python-setup: &python-setup
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv
+    - python3 -m venv venv
+    - source venv/bin/activate
+    - pip install --quiet pyyaml requests cryptography
+
+# ============================================
+# Validation Jobs
+# ============================================
+validate-inventory:
+  stage: validate
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - ansible-inventory -i ansible/inventory/production/hosts.yml --list > /dev/null
+    - ansible-playbook ansible/playbooks/backup.yml --syntax-check
+    - python3 scripts/python/inventory_generator.py --validate --inventory ansible/inventory/production/hosts.yml
+  only:
+    - main
+    - develop
+  except:
+    - tags
+
+validate-yaml:
+  stage: validate
+  image: python:3.11-slim
+  script:
+    - pip install yamllint
+    - yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' ansible/
+  only:
+    - main
+    - develop
+  except:
+    - tags
+
+# ============================================
+# Security Scan Jobs
+# ============================================
+secrets-scan:
+  stage: security-scan
+  <<: *python-setup
+  script:
+    - source venv/bin/activate
+    - python3 scripts/python/secrets_scanner.py --dir ansible/ --ci-mode
+    - python3 scripts/python/secrets_scanner.py --dir scripts/ --ci-mode
+  artifacts:
+    paths:
+      - secrets_report.json
+    when: always
+  except:
+    - tags
+
+dependency-scan:
+  stage: security-scan
+  image: python:3.11-slim
+  script:
+    - pip install safety
+    - safety check -r requirements.txt || true
+  allow_failure: true
+
+# ============================================
+# Test Jobs
+# ============================================
+test-validator:
+  stage: test
+  <<: *python-setup
+  script:
+    - source venv/bin/activate
+    - python3 -c "
+import json
+from scripts.python.config_validator import main
+print('Config validator module loaded successfully')
+"
+    - python3 scripts/python/hash_verifier.py --help
+    - python3 scripts/python/report_generator.py --help
+    - python3 scripts/python/health_check.py --help
+    - python3 scripts/python/metadata_logger.py --help
+  only:
+    - main
+    - develop
+
+# ============================================
+# Backup Jobs
+# ============================================
+backup-production:
+  stage: backup
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - ansible-playbook ansible/playbooks/backup.yml
+      -i ansible/inventory/production/hosts.yml
+      --vault-password-file .vault_password
+      -e "backup_method=auto notify_on_failure=true"
+  timeout: 2h
+  only:
+    - schedules
+  when: manual
+
+backup-region-centro:
+  stage: backup
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - ansible-playbook ansible/playbooks/backup.yml
+      -i ansible/inventory/production/hosts.yml
+      --vault-password-file .vault_password
+      --limit region_centro
+      -e "backup_method=api"
+  timeout: 30m
+  only:
+    - schedules
+  when: manual
+
+backup-staging:
+  stage: backup
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - ansible-playbook ansible/playbooks/backup.yml
+      -i ansible/inventory/staging/hosts.yml
+      --vault-password-file .vault_password
+      --check
+  environment: staging
+  only:
+    - develop
+
+# ============================================
+# Verification Jobs
+# ============================================
+verify-backups:
+  stage: verify
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - python3 scripts/python/hash_verifier.py
+      --backup-dir $BACKUP_DIR
+      --verify-chain
+    - python3 scripts/python/hash_verifier.py
+      --backup-dir $BACKUP_DIR
+      --verify-dir $BACKUP_DIR
+  only:
+    - main
+    - schedules
+
+validate-security:
+  stage: verify
+  <<: *python-setup
+  script:
+    - source venv/bin/activate
+    - python3 scripts/python/secrets_scanner.py --dir $BACKUP_DIR --ci-mode
+  only:
+    - main
+    - schedules
+
+# ============================================
+# Report Jobs
+# ============================================
+generate-report:
+  stage: report
+  <<: *python-setup
+  script:
+    - source venv/bin/activate
+    - python3 scripts/python/report_generator.py
+      --backup-dir $BACKUP_DIR
+      --date $(date +%Y-%m-%d)
+      --format html
+      --output reports/backup-report-$(date +%Y-%m-%d).html
+  artifacts:
+    paths:
+      - reports/*.html
+    expire_in: 90 days
+  only:
+    - main
+    - schedules
+
+# ============================================
+# Deploy Jobs
+# ============================================
+deploy-awx-template:
+  stage: deploy
+  script:
+    - echo "Deploying AWX job templates..."
+    - awx job_templates create --conf ci_cd/awx/backup-job-template.yml 2>/dev/null || echo "AWX CLI not available"
+  environment: production
+  only:
+    - main
+  when: manual
+
+# ============================================
+# Cleanup Jobs
+# ============================================
+cleanup-old-backups:
+  stage: cleanup
+  <<: *ansible-setup
+  script:
+    - source venv/bin/activate
+    - find $BACKUP_DIR -type d -mtime +90 -exec rm -rf {} \; 2>/dev/null || true
+    - find $BACKUP_DIR -name "*.log" -mtime +30 -delete 2>/dev/null || true
+  only:
+    - schedules
+  when: manual

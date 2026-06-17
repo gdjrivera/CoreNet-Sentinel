@@ -1,0 +1,22 @@
+---
+region_config:
+  name: "Sur"
+  code: "SUR"
+  timezone: "America/Punta_Arenas"
+  backup_window_start: "02:00"
+  backup_window_end: "04:00"
+  backup_order: 2
+  notify_escalation:
+    - "netops-sur@internal.local"
+    - "netops@internal.local"
+
+network:
+  management_subnet: "10.200.0.0/22"
+  mgmt_gateway: "10.200.0.1"
+  dns_servers:
+    - "10.200.0.10"
+    - "10.200.0.11"
+  ntp_servers:
+    - "10.200.0.20"
+    - "10.200.0.21"
+  syslog_server: "10.200.0.30"

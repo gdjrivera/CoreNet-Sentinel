@@ -1,0 +1,26 @@
+# ============================================
+# Configuration Comparison Report
+# Generated: {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+# ============================================
+
+Hostname: {{ fgt_hostname | default(inventory_hostname) }}
+Model: {{ fgt_model | default('N/A') }}
+Serial: {{ fgt_serial | default('N/A') }}
+
+Previous Backup Hash (SHA256): {{ previous_hash | default('NO PREVIOUS BACKUP') }}
+Current Backup Hash (SHA256):  {{ current_hash }}
+
+{% if previous_hash is defined and previous_hash != current_hash %}
+Status: **CONFIGURATION CHANGE DETECTED**
+
+Changes detected in:
+{% for section in changed_sections | default([]) %}
+  - {{ section }}
+{% else %}
+  - Generic configuration change (run full diff for details)
+{% endfor %}
+{% else %}
+Status: **NO CHANGES** - Configuration is identical to previous backup
+{% endif %}
+
+Backup Location: {{ backup_base_dir }}/{{ inventory_hostname }}/{{ ansible_date_time.date }}/

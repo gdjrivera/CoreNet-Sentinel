@@ -1,0 +1,149 @@
+# ============================================
+# FortiGate Backup Monitoring Stack
+# ============================================
+# Deploy with:
+#   docker-compose -f monitoring-stack.yml up -d
+#
+# Access:
+#   Grafana: http://localhost:3000 (admin/admin123)
+#   Prometheus: http://localhost:9090
+#   Alertmanager: http://localhost:9093
+# ============================================
+
+version: '3.8'
+
+networks:
+  monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus-fortigate
+    restart: unless-stopped
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/rules/backup_alerts.yml:/etc/prometheus/rules/backup_alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.retention.size=50GB'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+    labels:
+      app: fortigate-backup
+      component: prometheus
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: grafana-fortigate
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_BASIC_ENABLED=true
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+    labels:
+      app: fortigate-backup
+      component: grafana
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: alertmanager-fortigate
+    restart: unless-stopped
+    volumes:
+      - ../monitoring/alerts/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../monitoring/alerts/templates:/etc/alertmanager/templates:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    ports:
+      - "9093:9093"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+    labels:
+      app: fortigate-backup
+      component: alertmanager
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: node-exporter-fortigate
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /opt/backups:/opt/backups:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile'
+    ports:
+      - "9100:9100"
+    networks:
+      - monitoring
+    labels:
+      app: fortigate-backup
+      component: node-exporter
+
+  pushgateway:
+    image: prom/pushgateway:v1.7.0
+    container_name: pushgateway-fortigate
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    networks:
+      - monitoring
+    labels:
+      app: fortigate-backup
+      component: pushgateway
+
+  postgres-exporter:
+    image: prom/postgres-exporter:v0.14.0
+    container_name: postgres-exporter-fortigate
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://backup:backup@localhost:5432/fortigate_backup?sslmode=disable
+    ports:
+      - "9187:9187"
+    networks:
+      - monitoring
+    labels:
+      app: fortigate-backup
+      component: postgres-exporter
+    profiles:
+      - postgres
