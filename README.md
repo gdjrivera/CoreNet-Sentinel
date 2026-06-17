@@ -1,4 +1,4 @@
-# FortiGate Backup System
+# FortiGate Backup System Automatizado a Gran escala
 
 Sistema centralizado de respaldo automatico para configuraciones de FortiGate.
 11+ dispositivos en 4 regiones, backup cada 6 horas, validacion, hash chain, control de versiones cifrado, monitoreo Prometheus/Grafana, DR failover.
